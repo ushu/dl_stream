@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -40,25 +42,6 @@ type MasterJSON struct {
 			URL   string  `json:"url"`
 		} `json:"segments"`
 	} `json:"video"`
-	Audio []struct {
-		ID                 string  `json:"id"`
-		BaseURL            string  `json:"base_url"`
-		Format             string  `json:"format"`
-		MimeType           string  `json:"mime_type"`
-		Codecs             string  `json:"codecs"`
-		Bitrate            int     `json:"bitrate"`
-		AvgBitrate         int     `json:"avg_bitrate"`
-		Duration           float64 `json:"duration"`
-		Channels           int     `json:"channels"`
-		SampleRate         int     `json:"sample_rate"`
-		MaxSegmentDuration int     `json:"max_segment_duration"`
-		InitSegment        string  `json:"init_segment"`
-		Segments           []struct {
-			Start float64 `json:"start"`
-			End   float64 `json:"end"`
-			URL   string  `json:"url"`
-		} `json:"segments"`
-	} `json:"audio"`
 }
 
 func init() {
@@ -95,28 +78,32 @@ func main() {
 	if err = json.Unmarshal(buf, &mjson); err != nil {
 		log.Fatalf("Could not decode data: %v", err)
 	}
+	if err = processMasterJSON(u, &mjson); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func processMasterJSON(u *url.URL, mjson *MasterJSON) error {
 	if len(mjson.Video) == 0 {
-		log.Fatal("No video in stream")
+		return errors.New("No video in stream")
 	}
 	video := mjson.Video[0]
 
 	// open the output file
-	o, err := os.Create(output)
+	w, done, err := openOutput()
 	if err != nil {
-		log.Fatalf("Could not create output file: %v", err)
+		return fmt.Errorf("Could not create output file: %v", err)
 	}
-	defer o.Close()
-	w := bufio.NewWriter(o)
-	defer w.Flush()
+	defer done()
 
 	// decode initial segment, if any
 	if video.InitSegment != "" {
 		b, err := base64.StdEncoding.DecodeString(video.InitSegment)
 		if err != nil {
-			log.Fatalf("Could not decode initial segment: %v", err)
+			return fmt.Errorf("Could not decode initial segment: %v", err)
 		}
 		if _, err = w.Write(b); err != nil {
-			log.Fatalf("Could not write to output file: %v", err)
+			return fmt.Errorf("Could not write to output file: %v", err)
 		}
 	}
 
@@ -131,20 +118,19 @@ func main() {
 		}
 		res, err := http.Get(su.String())
 		if err != nil {
-			log.Fatalf("Could not download segment: %v", err)
+			return fmt.Errorf("Could not download segment: %v", err)
 		}
 		_, err = io.Copy(w, res.Body)
 		if err != nil {
 			_ = res.Body.Close()
-			log.Fatalf("Could download URL contents: %v", err)
+			return fmt.Errorf("Could download URL contents: %v", err)
 		}
-		if err := res.Body.Close(); err != nil {
-			log.Fatalf("Could not write to output file: %v", err)
+		if err = res.Body.Close(); err != nil {
+			return fmt.Errorf("Could not write to output file: %v", err)
 		}
 	}
 
-	// https://skyfire.vimeocdn.com/1550712600-0x3b90c95f6b2c22486d1f7abdc442ca216aacde7b/125872030/sep/audio/359921969/chop/segment-41.m4s
-
+	return nil
 }
 
 func readURL(u *url.URL) ([]byte, error) {
@@ -161,4 +147,16 @@ func readURL(u *url.URL) ([]byte, error) {
 		return nil, err
 	}
 	return buf, res.Body.Close()
+}
+
+func openOutput() (w *bufio.Writer, done func(), err error) {
+	var o *os.File
+	if o, err = os.Create(output); err == nil {
+		w = bufio.NewWriter(o)
+		done = func() {
+			w.Flush()
+			o.Close()
+		}
+	}
+	return
 }
