@@ -36,6 +36,14 @@ $ dl_stream -csv list.csv
 
 ### Other options
 
+#### base directory
+
+The base directory holding all downloads can be set using the `-d` flag:
+
+```sh
+$ dl_stream -d /base/path/for/videos -csv list.csv
+```
+
 #### re-download
 
 By default, the tool will not remove existing files, to force a re-download of existing files, one must provide the `-r` flag:
@@ -64,5 +72,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## TODO
 
 * [ ] Support for m3u8 (HLS) file descriptors
+* [ ] Code cleanup
 * [ ] Better docs
 

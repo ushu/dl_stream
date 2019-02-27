@@ -22,6 +22,7 @@ import (
 
 var input string
 var output string
+var baseDir string
 var isCSV bool
 var resolution int
 var redownload bool
@@ -60,6 +61,7 @@ func init() {
 	flag.BoolVar(&isCSV, "csv", false, "load CSV file")
 	flag.IntVar(&resolution, "res", 0, "expected resolution (defaults to max available)")
 	flag.BoolVar(&redownload, "r", false, "restart all downloads")
+	flag.StringVar(&baseDir, "d", "", "root directory for downloads")
 	flag.Usage = func() {
 		log.Println("Usage: dl_stream FILE_OR_URL")
 		flag.PrintDefaults()
@@ -113,6 +115,16 @@ func downloadCSV(in string) error {
 }
 
 func download(in, out string) error {
+	// peek (to avoid hitting the network...)
+	if !redownload {
+		if out, err := pathWithExtension(out, "", ".mp4"); err != nil {
+			return err
+		} else if fileExists(out) {
+			log.Printf("File %q already exists: skipping...\n", path.Base(out))
+			return nil
+		}
+	}
+
 	u, err := url.Parse(in)
 	if err != nil {
 		return err
@@ -238,12 +250,18 @@ func readURL(u *url.URL) ([]byte, error) {
 
 func pathWithExtension(out, mimeType, defaultExt string) (string, error) {
 	if ext := path.Ext(out); ext == "" {
-		if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
-			ext = exts[0]
-		} else {
+		if mimeType != "" {
+			if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
+				ext = exts[0]
+			}
+		}
+		if ext == "" {
 			ext = defaultExt
 		}
 		out = out + ext
+	}
+	if baseDir != "" {
+		out = filepath.Join(baseDir, out)
 	}
 	return filepath.Abs(out)
 }
