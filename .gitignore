@@ -1,0 +1,6 @@
+.DS_Store
+
+# Skip text files
+*.mp4
+*.txt
+*.csv

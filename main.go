@@ -12,20 +12,23 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"strings"
 )
 
 var input string
 var output string
 var isCSV bool
+var resolution int
 
 type MasterJSON struct {
-	ClipID  string  `json:"clip_id"`
-	BaseURL string  `json:"base_url"`
-	Video   []Video `json:"video"`
+	ClipID  string   `json:"clip_id"`
+	BaseURL string   `json:"base_url"`
+	Video   []*Video `json:"video"`
 }
 
 type Video struct {
@@ -52,8 +55,9 @@ type Video struct {
 func init() {
 	log.SetFlags(0)
 	log.SetPrefix("")
-	flag.StringVar(&output, "o", "download.mp4", "Output file name")
-	flag.BoolVar(&isCSV, "csv", false, "Load CSV file")
+	flag.StringVar(&output, "o", "download.mp4", "output file name")
+	flag.BoolVar(&isCSV, "csv", false, "load CSV file")
+	flag.IntVar(&resolution, "res", 0, "expected resolution (defaults to max available)")
 	flag.Usage = func() {
 		log.Println("Usage: dl_stream FILE_OR_URL")
 		flag.PrintDefaults()
@@ -105,8 +109,6 @@ func downloadCSV(in string) error {
 }
 
 func download(in, out string) error {
-	log.Printf("Downloading %s\n", in)
-
 	u, err := url.Parse(in)
 	if err != nil {
 		return err
@@ -117,28 +119,46 @@ func download(in, out string) error {
 	if err != nil {
 		return err
 	}
+
+	return processMasterJSON(u, mjson, output)
+}
+
+func selectVideo(videos []*Video) (*Video, error) {
+	var video *Video
+	highestRes := 0
+	for _, v := range videos {
+		if resolution != 0 && v.Height == resolution {
+			video = v
+			break
+		}
+		resPx := v.Width * v.Height
+		if resPx > highestRes {
+			highestRes = resPx
+			video = v
+		}
+	}
+	if video == nil {
+		return nil, errors.New("No video in stream")
+	}
+	return video, nil
+}
+
+func processMasterJSON(u *url.URL, mjson *MasterJSON, out string) error {
+	video, err := selectVideo(mjson.Video)
+	if err != nil {
+		return err
+	}
+
 	// prepare output
+	// -> the extensions depends on the video/mime type
+	out = pathWithExtension(out, video.MimeType)
+	log.Printf("Downloading %q (%dx%d)\n", path.Base(out), video.Width, video.Height)
+	// -> now we can open the destination file
 	w, done, err := openOutput(out)
 	if err != nil {
 		return err
 	}
 	defer done()
-
-	return processMasterJSON(u, mjson, w)
-}
-
-func selectVideo(videos []Video) (*Video, error) {
-	if len(videos) == 0 {
-		return nil, errors.New("No video in stream")
-	}
-	return &videos[0], nil
-}
-
-func processMasterJSON(u *url.URL, mjson *MasterJSON, w io.Writer) error {
-	video, err := selectVideo(mjson.Video)
-	if err != nil {
-		return err
-	}
 
 	// decode initial segment, if any
 	if video.InitSegment != "" {
@@ -206,7 +226,28 @@ func readURL(u *url.URL) ([]byte, error) {
 	return buf, res.Body.Close()
 }
 
+func pathWithExtension(out, mimeType string) string {
+	// find the file extension
+	ext := path.Ext(out)
+	base := strings.TrimSuffix(out, ext)
+	if ext == "" {
+		if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
+			ext = exts[0]
+		} else {
+			ext = ".mp4"
+		}
+	}
+	return base + ext
+}
+
 func openOutput(out string) (w *bufio.Writer, done func(), err error) {
+	// Create the containing directory
+	if dir := path.Dir(out); dir != "." {
+		if err = os.MkdirAll(dir, 0660); err != nil {
+			return
+		}
+	}
+
 	var o *os.File
 	if o, err = os.Create(out); err == nil {
 		w = bufio.NewWriter(o)
