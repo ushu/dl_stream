@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -24,6 +25,7 @@ var input string
 var output string
 var isCSV bool
 var resolution int
+var redownload bool
 
 type MasterJSON struct {
 	ClipID  string   `json:"clip_id"`
@@ -58,6 +60,7 @@ func init() {
 	flag.StringVar(&output, "o", "download.mp4", "output file name")
 	flag.BoolVar(&isCSV, "csv", false, "load CSV file")
 	flag.IntVar(&resolution, "res", 0, "expected resolution (defaults to max available)")
+	flag.BoolVar(&redownload, "r", false, "restart all downloads")
 	flag.Usage = func() {
 		log.Println("Usage: dl_stream FILE_OR_URL")
 		flag.PrintDefaults()
@@ -91,7 +94,9 @@ func downloadCSV(in string) error {
 		return err
 	}
 
-	records, err := csv.NewReader(bytes.NewReader(buf)).ReadAll()
+	r := csv.NewReader(bytes.NewReader(buf))
+	r.Comma = ';'
+	records, err := r.ReadAll()
 	if err != nil {
 		return err
 	}
@@ -120,7 +125,7 @@ func download(in, out string) error {
 		return err
 	}
 
-	return processMasterJSON(u, mjson, output)
+	return processMasterJSON(u, mjson, out)
 }
 
 func selectVideo(videos []*Video) (*Video, error) {
@@ -151,7 +156,13 @@ func processMasterJSON(u *url.URL, mjson *MasterJSON, out string) error {
 
 	// prepare output
 	// -> the extensions depends on the video/mime type
-	out = pathWithExtension(out, video.MimeType)
+	if out, err = pathWithExtension(out, video.MimeType); err != nil {
+		return err
+	}
+	if !redownload && fileExists(out) {
+		log.Printf("File %q already exists: skipping...\n", path.Base(out))
+		return nil
+	}
 	log.Printf("Downloading %q (%dx%d)\n", path.Base(out), video.Width, video.Height)
 	// -> now we can open the destination file
 	w, done, err := openOutput(out)
@@ -226,7 +237,7 @@ func readURL(u *url.URL) ([]byte, error) {
 	return buf, res.Body.Close()
 }
 
-func pathWithExtension(out, mimeType string) string {
+func pathWithExtension(out, mimeType string) (string, error) {
 	// find the file extension
 	ext := path.Ext(out)
 	base := strings.TrimSuffix(out, ext)
@@ -237,19 +248,19 @@ func pathWithExtension(out, mimeType string) string {
 			ext = ".mp4"
 		}
 	}
-	return base + ext
+	return filepath.Abs(base + ext)
 }
 
 func openOutput(out string) (w *bufio.Writer, done func(), err error) {
 	// Create the containing directory
 	if dir := path.Dir(out); dir != "." {
-		if err = os.MkdirAll(dir, 0660); err != nil {
+		if err = os.MkdirAll(dir, 0770); err != nil && !os.IsExist(err) {
 			return
 		}
 	}
 
 	var o *os.File
-	if o, err = os.Create(out); err == nil {
+	if o, err = os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0660); err == nil {
 		w = bufio.NewWriter(o)
 		done = func() {
 			w.Flush()
@@ -257,4 +268,9 @@ func openOutput(out string) (w *bufio.Writer, done func(), err error) {
 		}
 	}
 	return
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return !os.IsNotExist(err)
 }
