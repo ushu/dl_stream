@@ -18,7 +18,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 )
 
 var input string
@@ -156,7 +155,7 @@ func processMasterJSON(u *url.URL, mjson *MasterJSON, out string) error {
 
 	// prepare output
 	// -> the extensions depends on the video/mime type
-	if out, err = pathWithExtension(out, video.MimeType); err != nil {
+	if out, err = pathWithExtension(out, video.MimeType, ".mp4"); err != nil {
 		return err
 	}
 	if !redownload && fileExists(out) {
@@ -223,7 +222,7 @@ func decodeMasterJSON(buf []byte) (mjson *MasterJSON, err error) {
 
 func readURL(u *url.URL) ([]byte, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return ioutil.ReadFile(u.String())
+		return ioutil.ReadFile(u.Path)
 	}
 	res, err := http.Get(u.String())
 	if err != nil {
@@ -237,18 +236,16 @@ func readURL(u *url.URL) ([]byte, error) {
 	return buf, res.Body.Close()
 }
 
-func pathWithExtension(out, mimeType string) (string, error) {
-	// find the file extension
-	ext := path.Ext(out)
-	base := strings.TrimSuffix(out, ext)
-	if ext == "" {
+func pathWithExtension(out, mimeType, defaultExt string) (string, error) {
+	if ext := path.Ext(out); ext == "" {
 		if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
 			ext = exts[0]
 		} else {
-			ext = ".mp4"
+			ext = defaultExt
 		}
+		out = out + ext
 	}
-	return filepath.Abs(base + ext)
+	return filepath.Abs(out)
 }
 
 func openOutput(out string) (w *bufio.Writer, done func(), err error) {
