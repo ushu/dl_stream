@@ -42,7 +42,7 @@ type Video struct {
 	Bitrate            int     `json:"bitrate"`
 	AvgBitrate         int     `json:"avg_bitrate"`
 	Duration           float64 `json:"duration"`
-	Framerate          int     `json:"framerate"`
+	Framerate          float64 `json:"framerate"`
 	Width              int     `json:"width"`
 	Height             int     `json:"height"`
 	MaxSegmentDuration int     `json:"max_segment_duration"`
